@@ -5,7 +5,6 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-# Import Rich components
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -14,237 +13,245 @@ from rich import box
 
 console = Console()
 
-# --- DYNAMIC PATH HANDLING ---
+# ---------------- PATH SETUP ----------------
 SCRIPT_PATH = Path(__file__).resolve()
-BASE_DIR = SCRIPT_PATH.parent.parent 
+BASE_DIR = SCRIPT_PATH.parent.parent
 
 DATA_FILE = BASE_DIR / "data" / "expenses.csv"
 LOG_FILE = BASE_DIR / "logs" / "activity.log"
 BACKUP_DIR = BASE_DIR / "backup"
 
-# Ensure directories exist
 DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# ------------------ UTILITIES ------------------
+# ---------------- UTILITIES ----------------
 
 def log_activity(message):
     with open(LOG_FILE, "a") as log:
         log.write(f"{datetime.now()} - {message}\n")
 
 def validate_amount(input_amount):
-    # Detect comma used as decimal separator (e.g., 45,7)
     if re.match(r"^\d+,\d+$", input_amount.strip()):
-        console.print(
-            "[red]❌ Input Error:[/red] Use a decimal point instead of a comma.\n"
-            "[yellow]Example:[/yellow] 45.70  (not 45,7)"
-        )
+        console.print("[red]❌ Use decimal point, not comma (e.g. 45.7)[/red]")
         return None
 
-    # Remove currency symbols and spaces
-    clean_amt = re.sub(r"[^\d.,]", "", input_amount)
-
-    # Allow commas only as thousand separators
-    if clean_amt.count(",") > 0:
-        if not re.match(r"^\d{1,3}(,\d{3})*(\.\d+)?$", clean_amt):
-            console.print(
-                "[red]❌ Invalid number format.[/red]\n"
-                "[yellow]Valid examples:[/yellow] 1000 | 1,000 | 1,000.50"
-            )
-            return None
-
-    # Remove commas for conversion
-    clean_amt = clean_amt.replace(",", "")
+    clean = re.sub(r"[^\d.,]", "", input_amount)
+    if clean.count(",") and not re.match(r"^\d{1,3}(,\d{3})*(\.\d+)?$", clean):
+        console.print("[red]❌ Invalid number format[/red]")
+        return None
 
     try:
-        value = float(clean_amt)
+        value = float(clean.replace(",", ""))
         if value <= 0:
-            console.print("[red]❌ Amount must be greater than zero.[/red]")
+            console.print("[red]❌ Amount must be greater than zero[/red]")
             return None
         return value
     except ValueError:
-        console.print("[red]❌ Invalid numeric value.[/red]")
         return None
 
-
 def is_valid_category(cat):
-    """
-    Checks if category contains at least one letter (a-z or A-Z).
-    Allows special characters and numbers as long as a letter is present.
-    """
-    if not re.search(r'[a-zA-Z]', cat):
-        console.print("[red]Category must contain at least one letter (e.g., 'Food' or 'Apt-101').[/red]")
+    if not re.search(r"[A-Za-z]", cat):
+        console.print("[red]Category must contain at least one letter[/red]")
         return False
     return True
 
-# ------------------ UI COMPONENTS ------------------
+# ---------------- UI ----------------
 
 def make_header():
-    grid = Table.grid(expand=True)
-    grid.add_column(justify="center", ratio=1)
-    grid.add_row(
-        Panel("[bold cyan]🏠 HOMEEASE EXPENSE TRACKER[/bold cyan]",   
-              border_style="bright_blue", 
-              box=box.DOUBLE)
+    return Panel(
+        "[bold cyan]🏠 HOMEEASE EXPENSE TRACKER[/bold cyan]",
+        border_style="bright_blue",
+        box=box.DOUBLE,
+        expand=True
     )
-    return grid
 
 def display_table():
     table = Table(box=box.ROUNDED, header_style="bold magenta", expand=True)
-    table.add_column("ID", justify="center", style="dim", width=4)
-    table.add_column("Date", justify="center")
-    table.add_column("Category", justify="center", style="cyan")
-    table.add_column("Description", justify="center")
+    table.add_column("ID", justify="center", width=4)
+    table.add_column("Date")
+    table.add_column("Category", style="cyan")
+    table.add_column("Description")
     table.add_column("Amount", justify="right", style="bold green")
 
     total = 0.0
-    if not DATA_FILE.exists() or os.path.getsize(DATA_FILE) == 0:
-        return Panel("[yellow]No records found. Choose [1] to add an expense![/yellow]", border_style="dim")
 
-    with open(DATA_FILE, "r") as file:
-        reader = csv.reader(file)
-        for i, row in enumerate(reader, start=1):
-            if row:
+    if not DATA_FILE.exists() or os.path.getsize(DATA_FILE) == 0:
+        return Panel("[yellow]No records yet. Add an expense![/yellow]")
+
+    with open(DATA_FILE) as f:
+        for i, row in enumerate(csv.reader(f), start=1):
+            if len(row) == 4:
                 table.add_row(str(i), row[0], row[1], row[2], f"₱{row[3]}")
                 total += float(row[3].replace(",", ""))
-    
+
     table.add_section()
-    table.add_row("", "", "", "[bold white]TOTAL[/bold white]", f"[bold yellow]₱{total:,.2f}[/bold yellow]")
+    table.add_row("", "", "", "[bold]TOTAL[/bold]", f"[bold yellow]₱{total:,.2f}[/bold yellow]")
     return table
 
-# ------------------ CORE FEATURES ------------------
+# ---------------- CORE ----------------
 
 def add_expense():
-    console.print(Panel("[bold green]✙ ADD EXPENSE[/bold green]", expand=False))
-    
+    console.print(Panel("[bold green]✙ ADD EXPENSE[/bold green]"))
+
     while True:
-        category = Prompt.ask("Category").strip()
+        category = Prompt.ask("Category")
         if category and is_valid_category(category):
             break
-        elif not category:
-            console.print("[red]Category cannot be empty.[/red]")
+
+    description = Prompt.ask("Description")
 
     while True:
-        description = Prompt.ask("Description").strip()
-        if description:
+        amount = validate_amount(Prompt.ask("Amount"))
+        if amount:
             break
-        console.print("[red]Description cannot be empty.[/red]")
-    
-    while True:
-        amt_str = Prompt.ask("Amount")
-        amount = validate_amount(amt_str)
-        if amount: break
-        console.print("[red]Invalid amount. Try again.[/red]")
 
-    date = datetime.now().strftime("%Y-%m-%d")
-    with open(DATA_FILE, "a", newline="") as file:
-        csv.writer(file).writerow([date, category, description, f"{amount:,.2f}"])
-    
-    log_activity(f"Added: {category} - {amount}")
+    with open(DATA_FILE, "a", newline="") as f:
+        csv.writer(f).writerow([
+            datetime.now().strftime("%Y-%m-%d"),
+            category,
+            description,
+            f"{amount:,.2f}"
+        ])
+
+    log_activity(f"Added expense {category} - {amount}")
     console.print("[bold green]✔ Expense added successfully![/bold green]")
 
 def edit_expense():
-    if not DATA_FILE.exists(): return
-    rows = list(csv.reader(open(DATA_FILE, "r")))
-    if not rows: return
-    
-    val = Prompt.ask("ID to [bold yellow]EDIT[/bold yellow]")
-    try:
-        idx = int(val) - 1
-        if 0 <= idx < len(rows):
-            console.print(f"[yellow]Editing entry: {rows[idx][2]} ({rows[idx][1]})[/yellow]")
-            
-            while True:
-                new_cat = Prompt.ask("New Category", default=rows[idx][1]).strip()
-                if new_cat and is_valid_category(new_cat):
-                    break
-                elif not new_cat:
-                    console.print("[red]Category cannot be empty.[/red]")
+    rows = list(csv.reader(open(DATA_FILE)))
+    if not rows:
+        return
 
-            while True:
-                new_desc = Prompt.ask("New Description", default=rows[idx][2]).strip()
-                if new_desc:
-                    break
-                console.print("[red]Description cannot be empty.[/red]")
+    idx = int(Prompt.ask("ID to EDIT")) - 1
+    if not (0 <= idx < len(rows)):
+        console.print("[red]Invalid ID[/red]")
+        return
 
-            new_amt_str = Prompt.ask("New Amount", default=rows[idx][3])
-            new_amt = validate_amount(new_amt_str)
-            
-            if new_amt:
-                rows[idx][1] = new_cat
-                rows[idx][2] = new_desc
-                rows[idx][3] = f"{new_amt:,.2f}"
-                with open(DATA_FILE, "w", newline="") as file:
-                    csv.writer(file).writerows(rows)
-                log_activity(f"Edited ID {idx+1}")
-                console.print("[bold green]✔ Update successful.[/bold green]")
-            else:
-                console.print("[red]Invalid amount. Edit cancelled.[/red]")
-        else:
-            console.print("[red]Invalid ID.[/red]")
-    except ValueError:
-        console.print("[red]Enter a numeric ID.[/red]")
+    rows[idx][1] = Prompt.ask("New Category", default=rows[idx][1])
+    rows[idx][2] = Prompt.ask("New Description", default=rows[idx][2])
+
+    while True:
+        amt = validate_amount(Prompt.ask("New Amount", default=rows[idx][3]))
+        if amt:
+            rows[idx][3] = f"{amt:,.2f}"
+            break
+
+    with open(DATA_FILE, "w", newline="") as f:
+        csv.writer(f).writerows(rows)
+
+    log_activity(f"Edited ID {idx+1}")
+    console.print("[bold green]✔ Update successful![/bold green]")
 
 def delete_expense():
-    if not DATA_FILE.exists(): return
-    rows = list(csv.reader(open(DATA_FILE, "r")))
-    if not rows: return
-    
-    val = Prompt.ask("ID to [red]DELETE[/red]")
+    rows = list(csv.reader(open(DATA_FILE)))
+    if not rows:
+        return
+
+    console.print(
+        Panel(
+            "[bold red]DELETE OPTIONS[/bold red]\n\n"
+            "• Single ID → 3\n"
+            "• Multiple IDs → 1,2,5\n"
+            "• Delete ALL → ALL",
+            border_style="red"
+        )
+    )
+
+    choice = Prompt.ask("Enter delete option").strip().upper()
+
+    if choice == "ALL":
+        if Confirm.ask("[bold red]This will delete ALL data. Continue?[/bold red]"):
+            open(DATA_FILE, "w").close()
+            log_activity("Deleted ALL expenses")
+            console.print("[bold green]✔ All data deleted[/bold green]")
+        return
+
     try:
-        idx = int(val) - 1
-        if 0 <= idx < len(rows):
-            if Confirm.ask(f"Delete '{rows[idx][1]}'?"):
-                rows.pop(idx)
-                with open(DATA_FILE, "w", newline="") as file:
-                    csv.writer(file).writerows(rows)
-                log_activity(f"Deleted ID {idx+1}")
-                console.print("[green]Deleted.[/green]")
-        else:
-            console.print("[red]Invalid ID.[/red]")
+        ids = sorted({int(i.strip()) - 1 for i in choice.split(",")})
+        valid_ids = [i for i in ids if 0 <= i < len(rows)]
+
+        if not valid_ids:
+            console.print("[red]No valid IDs provided[/red]")
+            return
+
+        if Confirm.ask(f"[red]Delete {len(valid_ids)} selected record(s)?[/red]"):
+            for i in reversed(valid_ids):
+                rows.pop(i)
+
+            with open(DATA_FILE, "w", newline="") as f:
+                csv.writer(f).writerows(rows)
+
+            log_activity(f"Deleted IDs: {', '.join(str(i+1) for i in valid_ids)}")
+            console.print("[bold green]✔ Selected expenses deleted[/bold green]")
+
     except ValueError:
-        console.print("[red]Enter a number.[/red]")
+        console.print("[red]Invalid input format[/red]")
 
 def backup_data():
-    fname = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-    shutil.copy(DATA_FILE, BACKUP_DIR / fname)
+    name = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    shutil.copy(DATA_FILE, BACKUP_DIR / name)
     log_activity("Backup created")
-    console.print(f"[bold green]💾 Backup saved to /backup/{fname}[/bold green]")
+    console.print(f"[bold green]💾 Backup saved: {name}[/bold green]")
 
-# ------------------ MAIN LOOP ------------------
+def recover_data():
+    backups = sorted(BACKUP_DIR.glob("backup_*.csv"))
+    if not backups:
+        console.print("[red]No backups found[/red]")
+        return
+
+    table = Table(title="Available Backups")
+    table.add_column("ID")
+    table.add_column("Filename")
+
+    for i, b in enumerate(backups, 1):
+        table.add_row(str(i), b.name)
+
+    console.print(table)
+    idx = int(Prompt.ask("Select backup ID")) - 1
+
+    console.print("[yellow]Overwrite or Append?[/yellow]")
+    mode = Prompt.ask("Choose", choices=["overwrite", "append", "cancel"], default="cancel")
+
+    if mode == "cancel":
+        return
+
+    if mode == "overwrite":
+        shutil.copy(backups[idx], DATA_FILE)
+    else:
+        with open(backups[idx]) as src, open(DATA_FILE, "a", newline="") as dest:
+            csv.writer(dest).writerows(csv.reader(src))
+
+    log_activity(f"Recovered using {mode}")
+    console.print("[bold green]✔ Recovery successful![/bold green]")
+
+# ---------------- MAIN ----------------
 
 def main():
     while True:
         console.clear()
         console.print(make_header())
         console.print(display_table())
-        
-        console.print("\n[bold]Menu:[/bold]")
-        console.print("[1] ✙ Add")
-        console.print("[2] 🖊  Edit")
-        console.print("[3] 🗑 Delete")
-        console.print("[4] ↺ Backup")
-        console.print("[5] ✖ Exit")
-        
-        choice = Prompt.ask("\nChoice [bold cyan][1-5][/bold cyan]", choices=["1", "2", "3", "4", "5"], 
-            show_choices=False)
 
-        if choice == "1":
-            add_expense()
-            Prompt.ask("\nPress Enter to return")
-        elif choice == "2":
-            edit_expense()
-            Prompt.ask("\nPress Enter to return")
-        elif choice == "3":
-            delete_expense()
-            Prompt.ask("\nPress Enter to return")
-        elif choice == "4":
-            backup_data()
-            Prompt.ask("\nPress Enter to return")
-        elif choice == "5":
-            console.print("[italic]Exiting... Goodbye![/italic]")
+        console.print("\n[bold]Menu[/bold]")
+        console.print("[1] ✙ Add")
+        console.print("[2] 🖊 Edit")
+        console.print("[3] 🗑 Delete")
+        console.print("[4] 💾 Backup")
+        console.print("[5] ♻ Recover")
+        console.print("[6] ✖ Exit")
+
+        choice = Prompt.ask("Choose", choices=[str(i) for i in range(1, 7)])
+
+        if choice == "1": add_expense()
+        elif choice == "2": edit_expense()
+        elif choice == "3": delete_expense()
+        elif choice == "4": backup_data()
+        elif choice == "5": recover_data()
+        elif choice == "6":
+            console.print("[italic]Goodbye! 👋[/italic]")
             break
+
+        Prompt.ask("\nPress Enter to continue")
 
 if __name__ == "__main__":
     main()
