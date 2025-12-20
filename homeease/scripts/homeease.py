@@ -20,10 +20,26 @@ BASE_DIR = SCRIPT_PATH.parent.parent
 DATA_FILE = BASE_DIR / "data" / "expenses.csv"
 LOG_FILE = BASE_DIR / "logs" / "activity.log"
 BACKUP_DIR = BASE_DIR / "backup"
+CATEGORY_FILE = BASE_DIR / "data" / "categories.csv"
 
 DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+CATEGORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+# ---------------- INITIALIZE CATEGORY FILE ----------------
+if not CATEGORY_FILE.exists():
+    with open(CATEGORY_FILE, "w", newline="") as f:
+        for cat in ["Food", "Transport", "Travel", "Utilities", "Entertainment", "Shopping", "Medical", "Other"]:
+            f.write(f"{cat}\n")
+
+def load_categories():
+    with open(CATEGORY_FILE) as f:
+        return [line.strip() for line in f if line.strip()]
+
+def save_category(new_cat):
+    with open(CATEGORY_FILE, "a", newline="") as f:
+        f.write(f"{new_cat}\n")
 
 # ---------------- UTILITIES ----------------
 
@@ -60,7 +76,7 @@ def is_valid_category(cat):
 
 def make_header():
     return Panel(
-        "[bold cyan]🏠 HOMEEASE EXPENSE TRACKER[/bold cyan]",
+        "[bold cyan]                                         🏠 HOMEEASE EXPENSE TRACKER[/bold cyan]",
         border_style="bright_blue",
         box=box.DOUBLE,
         expand=True
@@ -89,15 +105,51 @@ def display_table():
     table.add_row("", "", "", "[bold]TOTAL[/bold]", f"[bold yellow]₱{total:,.2f}[/bold yellow]")
     return table
 
+# ---------------- CATEGORY TABLE ----------------
+
+def display_categories_table(categories):
+    table = Table(title="Select Category", box=box.ROUNDED, expand=True)
+    table.add_column("No.", justify="center", style="cyan", width=6)
+    table.add_column("Category", style="magenta")
+
+    for i, cat in enumerate(categories, 1):
+        table.add_row(str(i), cat)
+    
+    table.add_row(str(len(categories)+1), "Other / Add New Category")
+    
+    console.print(table)
+
 # ---------------- CORE ----------------
 
 def add_expense():
     console.print(Panel("[bold green]✙ ADD EXPENSE[/bold green]"))
 
+    categories = load_categories()
+    
     while True:
-        category = Prompt.ask("Category")
-        if category and is_valid_category(category):
+        display_categories_table(categories)
+        choice = Prompt.ask("Enter number").strip()
+        
+        if not choice.isdigit():
+            console.print("[red]Enter a valid number[/red]")
+            continue
+        
+        choice = int(choice)
+        
+        if 1 <= choice <= len(categories):
+            category = categories[choice-1]
             break
+        elif choice == len(categories)+1:
+            while True:
+                new_cat = Prompt.ask("Enter new category name").strip()
+                if is_valid_category(new_cat):
+                    category = new_cat
+                    save_category(new_cat)
+                    console.print(f"[green]✔ New category '{new_cat}' added[/green]")
+                    break
+            break
+        else:
+            console.print("[red]Invalid choice[/red]")
 
     description = Prompt.ask("Description")
 
@@ -127,7 +179,30 @@ def edit_expense():
         console.print("[red]Invalid ID[/red]")
         return
 
-    rows[idx][1] = Prompt.ask("New Category", default=rows[idx][1])
+    # Category selection
+    categories = load_categories()
+    while True:
+        display_categories_table(categories)
+        choice = Prompt.ask("Enter number", default="1").strip()
+        if not choice.isdigit():
+            console.print("[red]Enter a valid number[/red]")
+            continue
+        choice = int(choice)
+        if 1 <= choice <= len(categories):
+            rows[idx][1] = categories[choice-1]
+            break
+        elif choice == len(categories)+1:
+            while True:
+                new_cat = Prompt.ask("Enter new category name").strip()
+                if is_valid_category(new_cat):
+                    rows[idx][1] = new_cat
+                    save_category(new_cat)
+                    console.print(f"[green]✔ New category '{new_cat}' added[/green]")
+                    break
+            break
+        else:
+            console.print("[red]Invalid choice[/red]")
+
     rows[idx][2] = Prompt.ask("New Description", default=rows[idx][2])
 
     while True:
