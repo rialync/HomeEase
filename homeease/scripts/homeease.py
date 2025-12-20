@@ -34,12 +34,39 @@ def log_activity(message):
         log.write(f"{datetime.now()} - {message}\n")
 
 def validate_amount(input_amount):
-    clean_amt = re.sub(r'[^\d.]', '', input_amount)
-    try:
-        val = float(clean_amt)
-        return val if val > 0 else None
-    except ValueError:
+    # Detect comma used as decimal separator (e.g., 45,7)
+    if re.match(r"^\d+,\d+$", input_amount.strip()):
+        console.print(
+            "[red]❌ Input Error:[/red] Use a decimal point instead of a comma.\n"
+            "[yellow]Example:[/yellow] 45.70  (not 45,7)"
+        )
         return None
+
+    # Remove currency symbols and spaces
+    clean_amt = re.sub(r"[^\d.,]", "", input_amount)
+
+    # Allow commas only as thousand separators
+    if clean_amt.count(",") > 0:
+        if not re.match(r"^\d{1,3}(,\d{3})*(\.\d+)?$", clean_amt):
+            console.print(
+                "[red]❌ Invalid number format.[/red]\n"
+                "[yellow]Valid examples:[/yellow] 1000 | 1,000 | 1,000.50"
+            )
+            return None
+
+    # Remove commas for conversion
+    clean_amt = clean_amt.replace(",", "")
+
+    try:
+        value = float(clean_amt)
+        if value <= 0:
+            console.print("[red]❌ Amount must be greater than zero.[/red]")
+            return None
+        return value
+    except ValueError:
+        console.print("[red]❌ Invalid numeric value.[/red]")
+        return None
+
 
 def is_valid_category(cat):
     """
