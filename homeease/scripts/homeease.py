@@ -10,6 +10,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from rich import box
+from datetime import datetime, timedelta
 
 console = Console()
 
@@ -42,28 +43,42 @@ def save_category(new_cat):
         f.write(f"{new_cat}\n")
 
 # ---------------- UTILITIES ----------------
-
 def log_activity(message):
+    # Manually add 8 hours to the UTC time to match Philippine Time (PHT)
+    pht_time = datetime.now() + timedelta(hours=8)
+    timestamp = pht_time.strftime("%Y-%m-%d %I:%M:%S %p")
+    
     with open(LOG_FILE, "a") as log:
-        log.write(f"{datetime.now()} - {message}\n")
+        log.write(f"[{timestamp}] - {message}\n")
 
 def validate_amount(input_amount):
+    # 1. Check for negative sign immediately
+    if input_amount.strip().startswith("-"):
+        console.print("[red]❌ Amount cannot be negative![/red]")
+        return None
+
+    # 2. Check for comma typo
     if re.match(r"^\d+,\d+$", input_amount.strip()):
         console.print("[red]❌ Use decimal point, not comma (e.g. 45.7)[/red]")
         return None
 
+    # 3. Clean the input (remove currency symbols or spaces)
     clean = re.sub(r"[^\d.,]", "", input_amount)
+    
+    # 4. Handle thousands separators vs decimals
     if clean.count(",") and not re.match(r"^\d{1,3}(,\d{3})*(\.\d+)?$", clean):
         console.print("[red]❌ Invalid number format[/red]")
         return None
 
     try:
         value = float(clean.replace(",", ""))
+        # 5. Strict zero and negative check
         if value <= 0:
             console.print("[red]❌ Amount must be greater than zero[/red]")
             return None
         return value
     except ValueError:
+        console.print("[red]❌ Please enter a valid number[/red]")
         return None
 
 def is_valid_category(cat):
@@ -83,8 +98,8 @@ def make_header():
     )
 
 def display_table():
-    table = Table(box=box.ROUNDED, header_style="bold magenta", expand=True)
-    table.add_column("ID", justify="center", width=4)
+    table = Table(box=box.ROUNDED, header_style="bold magenta", expand=True, show_lines=True)
+    table.add_column("ID", justify="center")
     table.add_column("Date")
     table.add_column("Category", style="cyan")
     table.add_column("Description")
@@ -106,10 +121,14 @@ def display_table():
     return table
 
 # ---------------- CATEGORY TABLE ----------------
-
 def display_categories_table(categories):
-    table = Table(title="Select Category", box=box.ROUNDED, expand=True)
-    table.add_column("No.", justify="center", style="cyan", width=6)
+    table = Table(
+        title="Select Category", 
+        box=box.ROUNDED, 
+        expand=False, 
+        show_lines=True
+    )
+    table.add_column("No.", justify="center", style="cyan")
     table.add_column("Category", style="magenta")
 
     for i, cat in enumerate(categories, 1):
@@ -118,7 +137,6 @@ def display_categories_table(categories):
     table.add_row(str(len(categories)+1), "Other / Add New Category")
     
     console.print(table)
-
 # ---------------- CORE ----------------
 
 def add_expense():
@@ -150,8 +168,12 @@ def add_expense():
             break
         else:
             console.print("[red]Invalid choice[/red]")
-
-    description = Prompt.ask("Description")
+    # Ensure description is not empty
+    while True:
+        description = Prompt.ask("Description").strip()
+        if description:
+            break
+        console.print("[red]❌ Description cannot be empty![/red]")
 
     while True:
         amount = validate_amount(Prompt.ask("Amount"))
@@ -170,47 +192,78 @@ def add_expense():
     console.print("[bold green]✔ Expense added successfully![/bold green]")
 
 def edit_expense():
+    # Guard: Check if file exists and has data
+    if not DATA_FILE.exists() or os.path.getsize(DATA_FILE) == 0:
+        console.print("[yellow]⚠ No records found to edit. Add an expense first![/yellow]")
+        return
+    # Load rows from the data file
     rows = list(csv.reader(open(DATA_FILE)))
     if not rows:
         return
 
-    idx = int(Prompt.ask("ID to EDIT")) - 1
+    # Prompt for ID to edit
+    choice_id = Prompt.ask("ID to EDIT").strip()
+    if not choice_id.isdigit():
+        console.print("[red]Invalid ID[/red]")
+        return
+        
+    idx = int(choice_id) - 1
     if not (0 <= idx < len(rows)):
         console.print("[red]Invalid ID[/red]")
         return
 
-    # Category selection
+    # --- CATEGORY SELECTION WITH DYNAMIC DEFAULT ---
     categories = load_categories()
+    current_cat = rows[idx][1]
+    
+    # Determine the default number based on existing data
+    try:
+        # If the category exists in our list, find its number (index + 1)
+        current_cat_idx = str(categories.index(current_cat) + 1)
+    except ValueError:
+        # If the category is custom/not in list, default to "Other / Add New"
+        current_cat_idx = str(len(categories) + 1)
+
     while True:
         display_categories_table(categories)
-        choice = Prompt.ask("Enter number", default="1").strip()
+        # We set the default to the number corresponding to the current category
+        choice = Prompt.ask("Enter number", default=current_cat_idx).strip()
+        
         if not choice.isdigit():
             console.print("[red]Enter a valid number[/red]")
             continue
+            
         choice = int(choice)
         if 1 <= choice <= len(categories):
             rows[idx][1] = categories[choice-1]
             break
         elif choice == len(categories)+1:
             while True:
-                new_cat = Prompt.ask("Enter new category name").strip()
+                # Suggest the current category name as the default text for the new entry
+                new_cat = Prompt.ask("Enter new category name", default=current_cat).strip()
                 if is_valid_category(new_cat):
                     rows[idx][1] = new_cat
-                    save_category(new_cat)
-                    console.print(f"[green]✔ New category '{new_cat}' added[/green]")
+                    # Save to categories list if it's truly a new unique category
+                    if new_cat not in categories:
+                        save_category(new_cat)
+                        console.print(f"[green]✔ New category '{new_cat}' added to list[/green]")
                     break
             break
         else:
             console.print("[red]Invalid choice[/red]")
 
+    # Edit Description
     rows[idx][2] = Prompt.ask("New Description", default=rows[idx][2])
 
+    # Edit Amount
     while True:
-        amt = validate_amount(Prompt.ask("New Amount", default=rows[idx][3]))
+        amt_input = Prompt.ask("New Amount", default=rows[idx][3])
+        amt = validate_amount(amt_input)
         if amt:
             rows[idx][3] = f"{amt:,.2f}"
             break
 
+    # Save all changes back to the CSV
     with open(DATA_FILE, "w", newline="") as f:
         csv.writer(f).writerows(rows)
 
@@ -218,6 +271,10 @@ def edit_expense():
     console.print("[bold green]✔ Update successful![/bold green]")
 
 def delete_expense():
+    # Guard: Check if file exists and has data
+    if not DATA_FILE.exists() or os.path.getsize(DATA_FILE) == 0:
+        console.print("[yellow]⚠ No records found to delete![/yellow]")
+        return
     rows = list(csv.reader(open(DATA_FILE)))
     if not rows:
         return
@@ -263,6 +320,10 @@ def delete_expense():
         console.print("[red]Invalid input format[/red]")
 
 def backup_data():
+    # Guard: Check if file exists and has data
+    if not DATA_FILE.exists() or os.path.getsize(DATA_FILE) == 0:
+        console.print("[red]❌ Cannot create backup: There are no records to save.[/red]")
+        return
     name = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     shutil.copy(DATA_FILE, BACKUP_DIR / name)
     log_activity("Backup created")
@@ -275,30 +336,44 @@ def recover_data():
         return
 
     table = Table(title="Available Backups")
-    table.add_column("ID")
+    table.add_column("ID", justify="center")
     table.add_column("Filename")
 
     for i, b in enumerate(backups, 1):
         table.add_row(str(i), b.name)
 
     console.print(table)
-    idx = int(Prompt.ask("Select backup ID")) - 1
+    
+    choice = Prompt.ask("Select backup ID").strip()
+    
+    if not choice.isdigit():
+        console.print("[red]❌ Invalid input. Please enter a numeric ID.[/red]")
+        return
 
-    console.print("[yellow]Overwrite or Append?[/yellow]")
+    idx = int(choice) - 1
+
+    # Validate if the ID exists in our backups list
+    if not (0 <= idx < len(backups)):
+        console.print(f"[red]❌ Error: Backup ID {choice} does not exist.[/red]")
+        return
+
+    console.print("\n[yellow]Overwrite or Append?[/yellow]")
     mode = Prompt.ask("Choose", choices=["overwrite", "append", "cancel"], default="cancel")
 
     if mode == "cancel":
+        console.print("[blue]Recovery cancelled.[/blue]")
         return
 
     if mode == "overwrite":
         shutil.copy(backups[idx], DATA_FILE)
     else:
-        with open(backups[idx]) as src, open(DATA_FILE, "a", newline="") as dest:
-            csv.writer(dest).writerows(csv.reader(src))
+        with open(backups[idx], "r") as src, open(DATA_FILE, "a", newline="") as dest:
+            reader = csv.reader(src)
+            writer = csv.writer(dest)
+            writer.writerows(reader)
 
-    log_activity(f"Recovered using {mode}")
-    console.print("[bold green]✔ Recovery successful![/bold green]")
-
+    log_activity(f"Recovered from {backups[idx].name} using {mode}")
+    console.print(f"[bold green]✔ Recovery successful via {mode}![/bold green]")
 # ---------------- MAIN ----------------
 
 def main():
